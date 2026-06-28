@@ -32,14 +32,18 @@ Baixa o toolkit para `~/.local/share/steam-deck` e abre o menu:
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/victoraalm/steam-deck/main/install.sh)"
 ```
 
-Depois, para reabrir o menu a qualquer momento:
+A instalação também cria um **atalho "Steam Deck Toolkit"** (com ícone) na **área
+de trabalho** e **pesquisável** no menu de aplicativos / KRunner. Dá para reabrir
+de três formas:
 
-```sh
-~/.local/share/steam-deck/deck-toolkit
-```
+- pelo atalho na área de trabalho;
+- buscando por **"Steam Deck Toolkit"** no menu;
+- pelo terminal: `~/.local/share/steam-deck/deck-toolkit`.
 
-O menu agrupa os scripts em **Setup**, **Recuperação pós-update** e
-**Documentação**, cada um com uma descrição antes de executar.
+No menu, **navegue com as setas ↑/↓**, **Enter** seleciona e **q/Esc** sai — cada
+item mostra uma descrição. Há também opções para **atualizar o toolkit** e
+**reinstalar o atalho**. Tudo fica em `$HOME`, então o atalho e o ícone
+**sobrevivem aos updates** da SteamOS.
 
 ## Uso individual (sem menu)
 
@@ -85,7 +89,8 @@ Trocando o nome do arquivo final pelos demais: `arch-devenv`, `deck-region`,
 ├── setup/                  # distrobox-podman · arch-devenv · deck-region
 ├── recovery/               # podman · waydroid
 ├── docs/                   # persistent-pacman.md
-├── scripts/build.sh        # gera dist/ standalone (lib inlined)
+├── assets/deck-toolkit.svg # ícone do atalho
+├── scripts/                # build.sh (dist) · desktop-integration.sh (atalho+ícone)
 └── .github/workflows/      # ci.yml (lint+build) · release.yml (publica dist/)
 ```
 

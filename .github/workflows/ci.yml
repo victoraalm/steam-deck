@@ -20,7 +20,7 @@ jobs:
             lib/common.sh \
             setup/distrobox-podman setup/arch-devenv setup/deck-region \
             recovery/podman recovery/waydroid \
-            deck-toolkit install.sh scripts/build.sh
+            deck-toolkit install.sh scripts/build.sh scripts/desktop-integration.sh
 
       - name: Testar o build (gera dist/)
         run: bash scripts/build.sh

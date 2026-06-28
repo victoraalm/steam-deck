@@ -20,17 +20,22 @@ fi
 
 if [ -d "$DEST/.git" ]; then
     echo "Atualizando toolkit em $DEST..."
-    git -C "$DEST" pull --ff-only
+    git -C "$DEST" pull --ff-only \
+        || echo "Aviso: não atualizei (offline ou mudanças locais?). Seguindo com a versão atual."
 else
     echo "Clonando toolkit em $DEST..."
     mkdir -p "$(dirname "$DEST")"
     git clone --depth 1 "$REPO" "$DEST"
 fi
 
-chmod +x "$DEST/deck-toolkit" "$DEST"/setup/* "$DEST"/recovery/* 2>/dev/null || true
+chmod +x "$DEST/deck-toolkit" "$DEST"/setup/* "$DEST"/recovery/* "$DEST"/scripts/*.sh 2>/dev/null || true
+
+# Instala o atalho na área de trabalho + ícone (pesquisável no menu). Não-fatal.
+bash "$DEST/scripts/desktop-integration.sh" \
+    || echo "Aviso: não consegui instalar o atalho do desktop (siga pelo terminal)."
 
 echo ""
 echo "Toolkit pronto em: $DEST"
-echo "Abrindo o menu (rode '$DEST/deck-toolkit' quando quiser)..."
+echo "Abra pelo atalho 'Steam Deck Toolkit' (menu/área de trabalho) ou rode '$DEST/deck-toolkit'."
 echo ""
 exec "$DEST/deck-toolkit"

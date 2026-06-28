@@ -7,6 +7,18 @@ e o projeto adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 ## [Não lançado]
 
 ### Adicionado
+- Programa com **atalho na área de trabalho** e **pesquisável** no menu/KRunner,
+  com ícone próprio (`assets/deck-toolkit.svg`), via `scripts/desktop-integration.sh`
+  (tudo em `$HOME`, então persiste a updates).
+- Menu (`deck-toolkit`) agora navega por **setas (↑/↓)**, Enter seleciona e q/Esc
+  sai — em bash puro, sem dependências.
+- Opções no menu para **atualizar o toolkit** (git pull) e **(re)instalar o atalho**.
+- `install.sh` instala o atalho automaticamente e o `git pull` virou não-fatal
+  (abre o menu mesmo offline).
+
+## [1.0.0] - 2026-06-28
+
+### Adicionado
 - `deck-toolkit`: menu interativo (bash puro, zero dependências) que lista e
   executa todos os scripts com descrição.
 - `install.sh`: bootstrap para `curl | bash` que clona/atualiza o repo e abre o menu.

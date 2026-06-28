@@ -2,8 +2,8 @@
 # ==============================================================================
 # deck-toolkit — Menu central do steam-deck toolkit (bash puro, zero deps)
 # ------------------------------------------------------------------------------
-# Lista todos os scripts com uma descrição e os executa a partir do clone local.
-# Não instala nada para funcionar — sobrevive a qualquer estado da SteamOS.
+# Navegação por setas (↑/↓), Enter seleciona, q/Esc sai. Lê sequências ANSI
+# diretamente — não depende de dialog/whiptail/fzf.
 #
 # Uso: ./deck-toolkit
 # ==============================================================================
@@ -14,70 +14,144 @@ TOOLKIT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "$TOOLKIT_DIR/lib/common.sh"
 
-# Executa um script do toolkit mostrando antes uma descrição.
-run_script() {
-    local path="$1" desc="$2"; shift 2
-    clear
-    banner "$(basename "$path")"
-    echo -e "${desc}\n"
-    if [ -x "$path" ]; then
-        "$path" "$@"
-    else
-        bash "$path" "$@"   # roda mesmo sem o bit de execução
-    fi
-    echo ""
-    read -r -p "Pressione ENTER para voltar ao menu..." _
-}
+# ------------------------------------------------------------------------------
+# DEFINIÇÃO DAS ENTRADAS (label | descrição | ação)
+# ------------------------------------------------------------------------------
+ENTRY_LABEL=(
+    "[Setup]      Distrobox + Podman (rootless)"
+    "[Setup]      Ambiente de dev no container Arch"
+    "[Setup]      Região: teclado / fuso / locale   [sistema]"
+    "[Recuperar]  Podman — doctor (destrava após update)"
+    "[Recuperar]  Waydroid — atualizar / recuperar"
+    "[Docs]       Partição persistente do pacman + GPG"
+    "[Toolkit]    Atualizar o toolkit (git pull)"
+    "[Toolkit]    Instalar / atualizar atalho + ícone"
+    "Sair"
+)
+ENTRY_DESC=(
+    "Instala ou ATUALIZA Distrobox + Podman rootless. Idempotente: só baixa se houver versão nova. Mexe em ~/.local (persiste); subuid em /etc pode cair no update."
+    "Provisiona o ambiente de DEV dentro do container Arch (zsh, pyenv, VS Code). Rode dentro do 'distrobox enter arch', não no host."
+    "Configura teclado US alt-intl, fuso America/Sao_Paulo, NTP e locale en_US. ATENÇÃO: grava em /etc — pode resetar no update da SteamOS."
+    "Diagnostica e repara o Podman travado (mata processos, remove locks, regenera estado). Pergunta se quer modo dry-run (simulação)."
+    "Baixa e executa o atualizador OFICIAL do Waydroid (upstream). Pede confirmação antes de rodar o código baixado."
+    "Abre o guia da partição persistente para pacman + chaves GPG sobreviverem aos updates."
+    "Atualiza este toolkit para a última versão via 'git pull' (se for um clone git)."
+    "(Re)instala o atalho na área de trabalho, no menu de aplicativos e o ícone."
+    "Fecha o menu."
+)
+ENTRY_ACTION=(
+    setup_distrobox setup_arch setup_region
+    rec_podman rec_waydroid doc_pacman
+    update_toolkit install_desktop quit
+)
 
-# Abre um documento no pager (ou cat como fallback).
-show_doc() {
-    local path="$1"
-    if require_cmd less; then less "$path"; else cat "$path"; read -r -p "ENTER..." _; fi
-}
+SELECTED=0
 
-show_menu() {
-    clear
+# ------------------------------------------------------------------------------
+# RENDER + NAVEGAÇÃO POR SETAS
+# ------------------------------------------------------------------------------
+draw_menu() {
+    printf '\033[H\033[J'   # limpa a tela e volta ao topo
     banner "STEAM DECK TOOLKIT" "$CYAN"
-    cat <<EOF
-
- ${BOLD}SETUP${NC}
-  1) distrobox-podman  — Instala/atualiza Distrobox + Podman rootless (user-space)
-  2) arch-devenv       — Ambiente de dev no container Arch: zsh, pyenv, VS Code
-  3) deck-region       — Teclado US-intl, fuso SP, NTP e locale  ${YELLOW}[sistema]${NC}
-
- ${BOLD}RECUPERAÇÃO PÓS-UPDATE${NC}
-  4) podman            — "Doctor": destrava o Podman travado após updates
-  5) waydroid          — Baixa e roda o atualizador do Waydroid (Android)
-
- ${BOLD}DOCUMENTAÇÃO${NC}
-  6) persistent-pacman — Guia: partição persistente p/ pacman + chaves GPG
-
-  0) Sair
-EOF
+    echo ""
+    local i
+    for i in "${!ENTRY_LABEL[@]}"; do
+        if [ "$i" -eq "$SELECTED" ]; then
+            printf '   \033[7m  %-48s \033[0m\n' "${ENTRY_LABEL[$i]}"   # vídeo reverso
+        else
+            printf '     %-48s\n' "${ENTRY_LABEL[$i]}"
+        fi
+    done
+    echo ""
     echo "----------------------------------------------------------------"
+    printf ' %s\n' "${ENTRY_DESC[$SELECTED]}"
+    echo "----------------------------------------------------------------"
+    printf ' %s↑/↓%s navega    %sEnter%s seleciona    %sq/Esc%s sai\n' \
+        "$BOLD" "$NC" "$BOLD" "$NC" "$BOLD" "$NC"
 }
+
+menu_select() {
+    local count=${#ENTRY_LABEL[@]} key rest
+    command -v tput >/dev/null 2>&1 && tput civis 2>/dev/null   # esconde o cursor
+    while true; do
+        draw_menu
+        IFS= read -rsn1 key
+        case "$key" in
+            $'\x1b')   # Esc sozinho ou início de seta (Esc [ A/B)
+                read -rsn2 -t 0.01 rest 2>/dev/null || rest=''
+                case "$rest" in
+                    '[A') SELECTED=$(( (SELECTED - 1 + count) % count )) ;;
+                    '[B') SELECTED=$(( (SELECTED + 1) % count )) ;;
+                    '')   SELECTED=-1; break ;;     # Esc puro = sair
+                esac
+                ;;
+            'k') SELECTED=$(( (SELECTED - 1 + count) % count )) ;;   # atalho estilo vim
+            'j') SELECTED=$(( (SELECTED + 1) % count )) ;;
+            'q'|'Q') SELECTED=-1; break ;;
+            '') break ;;                            # Enter = seleciona
+        esac
+    done
+    command -v tput >/dev/null 2>&1 && tput cnorm 2>/dev/null    # mostra o cursor
+}
+
+pause() { echo ""; read -r -p "Pressione ENTER para voltar ao menu..." _; }
+
+# ------------------------------------------------------------------------------
+# AÇÕES
+# ------------------------------------------------------------------------------
+run_script() {
+    local path="$1" title="$2"; shift 2
+    clear
+    banner "$title"
+    echo ""
+    if [ -x "$path" ]; then "$path" "$@"; else bash "$path" "$@"; fi
+    pause
+}
+
+update_toolkit() {
+    clear; banner "ATUALIZAR O TOOLKIT"
+    if [ -d "$TOOLKIT_DIR/.git" ]; then
+        if git -C "$TOOLKIT_DIR" pull --ff-only; then
+            log_ok "Toolkit atualizado."
+        else
+            log_warn "Não consegui atualizar (offline ou há mudanças locais?)."
+        fi
+    else
+        log_warn "Este toolkit não é um clone git — nada a atualizar."
+    fi
+    pause
+}
+
+# ------------------------------------------------------------------------------
+# LOOP PRINCIPAL
+# ------------------------------------------------------------------------------
+if [ ! -t 0 ] || [ ! -t 1 ]; then
+    log_err "O menu precisa de um terminal interativo. Rode './deck-toolkit' num terminal."
+    exit 1
+fi
 
 while true; do
-    show_menu
-    read -r -p "Escolha uma opção: " opt
-    case "$opt" in
-        1) run_script "$TOOLKIT_DIR/setup/distrobox-podman" \
-             "Instala/atualiza Distrobox + Podman rootless. Idempotente; mexe em ~/.local (persiste). A etapa de subuid/subgid toca /etc e pode ser perdida no update." ;;
-        2) run_script "$TOOLKIT_DIR/setup/arch-devenv" \
-             "Provisiona o ambiente de DEV DENTRO do container Arch (distrobox): zsh + oh-my-zsh, pyenv + Python, VS Code (AUR). Não rode no host SteamOS." ;;
-        3) run_script "$TOOLKIT_DIR/setup/deck-region" \
-             "Configura teclado US alt-intl, fuso America/Sao_Paulo, NTP e locale en_US. ATENÇÃO: grava em /etc — pode resetar no update." ;;
-        4) if confirm "Rodar o Podman Doctor em modo DRY-RUN (simulação, não altera nada)?"; then
-               run_script "$TOOLKIT_DIR/recovery/podman" \
-                 "Diagnostica e repara o Podman rootless travado. (Modo dry-run: só simula.)" --dry-run
-           else
-               run_script "$TOOLKIT_DIR/recovery/podman" \
-                 "Diagnostica e repara o Podman rootless travado: mata processos, remove locks, regenera o estado e testa."
-           fi ;;
-        5) run_script "$TOOLKIT_DIR/recovery/waydroid" \
-             "Baixa e executa o atualizador OFICIAL do Waydroid (upstream ryanrudolfoba). Pede confirmação antes de rodar o código baixado." ;;
-        6) show_doc "$TOOLKIT_DIR/docs/persistent-pacman.md" ;;
-        0|q|Q) clear; exit 0 ;;
-        *) log_warn "Opção inválida: $opt"; sleep 1 ;;
+    menu_select
+    [ "$SELECTED" -lt 0 ] && { clear; exit 0; }
+    case "${ENTRY_ACTION[$SELECTED]}" in
+        setup_distrobox) run_script "$TOOLKIT_DIR/setup/distrobox-podman" "Distrobox + Podman" ;;
+        setup_arch)      run_script "$TOOLKIT_DIR/setup/arch-devenv" "Ambiente de dev (Arch)" ;;
+        setup_region)    run_script "$TOOLKIT_DIR/setup/deck-region" "Região do sistema" ;;
+        rec_podman)
+            clear; banner "Podman — Doctor"
+            if confirm "Rodar em modo DRY-RUN (simulação, não altera nada)?"; then
+                run_script "$TOOLKIT_DIR/recovery/podman" "Podman — Doctor (dry-run)" --dry-run
+            else
+                run_script "$TOOLKIT_DIR/recovery/podman" "Podman — Doctor"
+            fi
+            ;;
+        rec_waydroid)    run_script "$TOOLKIT_DIR/recovery/waydroid" "Waydroid" ;;
+        doc_pacman)
+            if require_cmd less; then less "$TOOLKIT_DIR/docs/persistent-pacman.md"
+            else clear; cat "$TOOLKIT_DIR/docs/persistent-pacman.md"; pause; fi
+            ;;
+        update_toolkit)  update_toolkit ;;
+        install_desktop) run_script "$TOOLKIT_DIR/scripts/desktop-integration.sh" "Integração com o desktop" ;;
+        quit)            clear; exit 0 ;;
     esac
 done
