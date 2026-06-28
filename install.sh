@@ -3,14 +3,14 @@
 # install.sh — Bootstrap do steam-deck toolkit
 # ------------------------------------------------------------------------------
 # Clona (ou atualiza) o repositório e abre o menu. Pensado para:
-#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/victoraalm/steam_deck/main/install.sh)"
+#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/victoraalm/steam-deck/main/install.sh)"
 #
 # O destino pode ser sobrescrito com a variável DECK_TOOLKIT_DIR.
 # ==============================================================================
 
 set -euo pipefail
 
-REPO="https://github.com/victoraalm/steam_deck.git"
+REPO="https://github.com/victoraalm/steam-deck.git"
 DEST="${DECK_TOOLKIT_DIR:-$HOME/.local/share/steam-deck}"
 
 if ! command -v git >/dev/null 2>&1; then

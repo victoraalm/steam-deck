@@ -4,7 +4,7 @@ Scripts para configurar e manter o **modo desktop** do Steam Deck (SteamOS /
 Arch Linux): instalação de Distrobox + Podman, ambiente de desenvolvimento,
 configuração regional e recuperação de serviços após atualizações do sistema.
 
-![CI](https://github.com/victoraalm/steam_deck/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/victoraalm/steam-deck/actions/workflows/ci.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
 
 > ⚠️ **Importante — SteamOS é um Arch imutável.** A raiz do sistema é somente
@@ -29,7 +29,7 @@ configuração regional e recuperação de serviços após atualizações do sis
 Baixa o toolkit para `~/.local/share/steam-deck` e abre o menu:
 
 ```sh
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/victoraalm/steam_deck/main/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/victoraalm/steam-deck/main/install.sh)"
 ```
 
 Depois, para reabrir o menu a qualquer momento:
@@ -48,10 +48,10 @@ release (já vêm com a `lib` embutida):
 
 ```sh
 # Instalar/atualizar Distrobox + Podman
-bash -c "$(curl -fsSL https://github.com/victoraalm/steam_deck/releases/latest/download/distrobox-podman)"
+bash -c "$(curl -fsSL https://github.com/victoraalm/steam-deck/releases/latest/download/distrobox-podman)"
 
 # Destravar o Podman após um update (use --dry-run para simular)
-bash -c "$(curl -fsSL https://github.com/victoraalm/steam_deck/releases/latest/download/podman)"
+bash -c "$(curl -fsSL https://github.com/victoraalm/steam-deck/releases/latest/download/podman)"
 ```
 
 Trocando o nome do arquivo final pelos demais: `arch-devenv`, `deck-region`,
