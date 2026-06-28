@@ -20,8 +20,14 @@ fi
 
 if [ -d "$DEST/.git" ]; then
     echo "Atualizando toolkit em $DEST..."
-    git -C "$DEST" pull --ff-only \
-        || echo "Aviso: não atualizei (offline ou mudanças locais?). Seguindo com a versão atual."
+    # fetch + reset --hard: força a última versão e descarta mudanças locais
+    # (ex.: bits de execução), que faziam o 'pull --ff-only' travar na versão antiga.
+    if git -C "$DEST" fetch --depth 1 origin 2>/dev/null \
+        && git -C "$DEST" reset --hard origin/main 2>/dev/null; then
+        echo "Atualizado para a última versão."
+    else
+        echo "Aviso: não atualizei (offline?). Seguindo com a versão local."
+    fi
 else
     echo "Clonando toolkit em $DEST..."
     mkdir -p "$(dirname "$DEST")"

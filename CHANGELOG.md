@@ -14,10 +14,18 @@ e o projeto adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
   sai — em bash puro, sem dependências.
 - Opções no menu para **atualizar o toolkit** (git pull), **(re)instalar** e
   **remover** o atalho.
-- Ícone também em **PNG** (`assets/deck-toolkit.png`) além do SVG; o instalador
-  prefere o PNG e cai para o SVG se faltar.
-- `install.sh` instala o atalho automaticamente e o `git pull` virou não-fatal
-  (abre o menu mesmo offline).
+- Ícone em **vários tamanhos** (16–256 px em `assets/icons/`) instalados no tema
+  hicolor + SVG escalável; o `.desktop` referencia o ícone por nome → nítido em
+  qualquer escala. Caches do KDE atualizados (`kbuildsycoca`, `gtk-update-icon-cache`).
+- `install.sh` instala o atalho automaticamente.
+
+### Corrigido
+- `install.sh` agora usa `git fetch` + `reset --hard` no lugar de `pull --ff-only`:
+  o pull travava em clones com bits de execução alterados, deixando o usuário
+  preso na versão antiga (menu numerado e sem atalho). **Esta era a causa de o
+  menu por setas e o atalho não aparecerem.**
+- Scripts marcados como **executáveis no git** (modo 755), eliminando a origem do
+  problema acima.
 
 ## [1.0.0] - 2026-06-28
 
