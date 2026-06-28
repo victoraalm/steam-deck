@@ -12,7 +12,10 @@ e o projeto adota [Versionamento Semântico](https://semver.org/lang/pt-BR/).
   (tudo em `$HOME`, então persiste a updates).
 - Menu (`deck-toolkit`) agora navega por **setas (↑/↓)**, Enter seleciona e q/Esc
   sai — em bash puro, sem dependências.
-- Opções no menu para **atualizar o toolkit** (git pull) e **(re)instalar o atalho**.
+- Opções no menu para **atualizar o toolkit** (git pull), **(re)instalar** e
+  **remover** o atalho.
+- Ícone também em **PNG** (`assets/deck-toolkit.png`) além do SVG; o instalador
+  prefere o PNG e cai para o SVG se faltar.
 - `install.sh` instala o atalho automaticamente e o `git pull` virou não-fatal
   (abre o menu mesmo offline).
 

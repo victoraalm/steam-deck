@@ -26,6 +26,7 @@ ENTRY_LABEL=(
     "[Docs]       Partição persistente do pacman + GPG"
     "[Toolkit]    Atualizar o toolkit (git pull)"
     "[Toolkit]    Instalar / atualizar atalho + ícone"
+    "[Toolkit]    Remover atalho + ícone"
     "Sair"
 )
 ENTRY_DESC=(
@@ -37,12 +38,13 @@ ENTRY_DESC=(
     "Abre o guia da partição persistente para pacman + chaves GPG sobreviverem aos updates."
     "Atualiza este toolkit para a última versão via 'git pull' (se for um clone git)."
     "(Re)instala o atalho na área de trabalho, no menu de aplicativos e o ícone."
+    "Remove o atalho (área de trabalho + menu) e o ícone instalados."
     "Fecha o menu."
 )
 ENTRY_ACTION=(
     setup_distrobox setup_arch setup_region
     rec_podman rec_waydroid doc_pacman
-    update_toolkit install_desktop quit
+    update_toolkit install_desktop uninstall_desktop quit
 )
 
 SELECTED=0
@@ -151,7 +153,8 @@ while true; do
             else clear; cat "$TOOLKIT_DIR/docs/persistent-pacman.md"; pause; fi
             ;;
         update_toolkit)  update_toolkit ;;
-        install_desktop) run_script "$TOOLKIT_DIR/scripts/desktop-integration.sh" "Integração com o desktop" ;;
-        quit)            clear; exit 0 ;;
+        install_desktop)   run_script "$TOOLKIT_DIR/scripts/desktop-integration.sh" "Integração com o desktop" ;;
+        uninstall_desktop) run_script "$TOOLKIT_DIR/scripts/desktop-integration.sh" "Remover atalho" --uninstall ;;
+        quit)              clear; exit 0 ;;
     esac
 done
