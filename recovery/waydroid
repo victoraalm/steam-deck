@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# recovery/waydroid — Atualiza/recupera o Waydroid (Android no Steam Deck)
+# ------------------------------------------------------------------------------
+# Baixa e executa o atualizador OFICIAL do upstream:
+#   ryanrudolfoba/SteamOS-Waydroid-Installer (extras/Waydroid-Updater.sh)
+#
+# ATENÇÃO: este script BAIXA E EXECUTA código de terceiros (o repositório acima).
+#          Por padrão pede confirmação antes de rodar. Use --yes para pular.
+#
+# Escopo: USER-SPACE wrapper. O Waydroid pode quebrar em updates da SteamOS;
+#         este script busca a versão mais nova do atualizador upstream e a roda.
+#
+# Uso:    ./waydroid [--yes] [-h|--help]
+# ==============================================================================
+
+# -e: aborta em qualquer falha (fluxo linear; não queremos executar download ruim).
+set -euo pipefail
+
+# --- Carrega a lib comum (o build.sh inlina isto nas releases) ----------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/common.sh
+source "$SCRIPT_DIR/../lib/common.sh"
+
+# ------------------------------------------------------------------------------
+# CONFIGURAÇÃO & ARGUMENTOS
+# ------------------------------------------------------------------------------
+SCRIPT_NAME="Waydroid-Updater.sh"
+DEST="$HOME/$SCRIPT_NAME"
+URL="https://raw.githubusercontent.com/ryanrudolfoba/SteamOS-Waydroid-Installer/refs/heads/main/extras/Waydroid-Updater.sh"
+ASSUME_YES=0
+
+usage() {
+    cat <<EOF
+Atualizador do Waydroid — baixa e roda o atualizador oficial do upstream.
+
+Uso: $(basename "$0") [opções]
+
+Opções:
+  --yes, -y     Não pede confirmação antes de executar o código baixado.
+  -h, --help    Mostra esta ajuda.
+
+Fonte: $URL
+EOF
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --yes|-y) ASSUME_YES=1 ;;
+        -h|--help) usage; exit 0 ;;
+        *) log_err "Opção desconhecida: $1"; usage; exit 1 ;;
+    esac
+    shift
+done
+
+# Baixa uma URL para um arquivo, com fallback curl -> wget.
+download() {
+    local url="$1" out="$2"
+    if require_cmd curl; then
+        curl -fsSL -o "$out" "$url"
+    elif require_cmd wget; then
+        wget -q -O "$out" "$url"
+    else
+        log_err "Nem curl nem wget encontrados — não há como baixar."
+        return 1
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# WORKFLOW
+# ------------------------------------------------------------------------------
+banner "ATUALIZADOR DO WAYDROID"
+log_warn "Este script baixa e executa código de terceiros:"
+echo "  $URL"
+
+log_info "Removendo versão antiga (se existir)..."
+rm -f -- "$DEST"
+
+log_info "Baixando a versão mais recente..."
+tmp="$(mktemp)"
+if ! download "$URL" "$tmp"; then
+    rm -f -- "$tmp"
+    log_err "Falha no download. Abortando."
+    exit 1
+fi
+
+# Valida que o download não veio vazio (404, conexão cortada, etc.).
+if [ ! -s "$tmp" ]; then
+    rm -f -- "$tmp"
+    log_err "O arquivo baixado está vazio. Abortando (não vou executar lixo)."
+    exit 1
+fi
+
+mv -- "$tmp" "$DEST"
+chmod +x "$DEST"
+log_ok "Atualizador salvo em: $DEST"
+
+# --- Confirmação antes de executar código baixado ----------------------------
+if [ "$ASSUME_YES" -ne 1 ]; then
+    if ! confirm "Executar o atualizador agora?"; then
+        log_warn "Cancelado. O arquivo está em $DEST se quiser rodar depois."
+        exit 0
+    fi
+fi
+
+log_info "Iniciando o atualizador..."
+bash "$DEST"

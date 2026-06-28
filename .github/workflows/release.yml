@@ -1,0 +1,25 @@
+name: release
+
+# Dispara ao publicar uma tag de versão, ex.:
+#   git tag v1.0.0 && git push origin v1.0.0
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Gerar scripts standalone (dist/)
+        run: bash scripts/build.sh
+
+      - name: Publicar release com os artefatos
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

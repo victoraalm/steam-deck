@@ -1,0 +1,15 @@
+# Este projeto roda no Linux (Steam Deck). Scripts de shell DEVEM usar LF —
+# quebras CRLF fazem o bash falhar no Linux (ex.: "\r: command not found").
+# Estas regras garantem LF mesmo quando o repo é clonado/checkout no Windows.
+
+* text=auto eol=lf
+
+*.sh         text eol=lf
+*.md         text eol=lf
+*.yml        text eol=lf
+deck-toolkit text eol=lf
+install.sh   text eol=lf
+lib/*        text eol=lf
+setup/*      text eol=lf
+recovery/*   text eol=lf
+scripts/*    text eol=lf

@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# setup/distrobox-podman — Instalador inteligente de Distrobox + Podman rootless
+# ------------------------------------------------------------------------------
+# Compara a versão local com a do GitHub e só baixa/instala se houver novidade.
+# Idempotente: pode rodar quantas vezes quiser.
+#
+# Escopo: MAJORITARIAMENTE USER-SPACE ($HOME/.local) — sobrevive a updates.
+#         EXCEÇÃO: a etapa de subuid/subgid escreve em /etc (sistema imutável) e
+#         pode ser PERDIDA num update da SteamOS — reexecute este script depois.
+#
+# Uso:    ./distrobox-podman [-h|--help]
+# ==============================================================================
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/common.sh
+source "$SCRIPT_DIR/../lib/common.sh"
+
+case "${1:-}" in
+    -h|--help)
+        echo "Instala/atualiza Distrobox + Podman rootless no Steam Deck."
+        echo "Uso: $(basename "$0")"
+        exit 0
+        ;;
+esac
+
+banner "VERIFICAÇÃO INTELIGENTE: DISTROBOX & PODMAN" "$YELLOW"
+
+# ------------------------------------------------------------------------------
+# 1. SENHA (SUDO) — necessária para a etapa de subuid/subgid
+# ------------------------------------------------------------------------------
+log_info "Passo 1/6: Verificando status da senha..."
+PASS_STATUS="$(passwd -S "$(whoami)" 2>/dev/null | awk '{print $2}')"
+if [ "$PASS_STATUS" = "NP" ]; then
+    log_warn "Senha de usuário não definida. Defina uma agora (necessária p/ sudo):"
+    if ! passwd; then
+        log_err "Senha não criada. Abortando."
+        exit 1
+    fi
+else
+    log_skip "Senha já definida."
+fi
+
+# ------------------------------------------------------------------------------
+# 2. PATH (~/.local/bin)
+# ------------------------------------------------------------------------------
+log_info "Passo 2/6: Verificando PATH em ~/.bashrc..."
+BASHRC="$HOME/.bashrc"
+PATH_LINE='export PATH=$HOME/.local/bin:$PATH'
+mkdir -p "$HOME/.local/bin"
+
+# touch garante que o grep não erre se o .bashrc ainda não existir.
+touch "$BASHRC"
+if grep -Fxq "$PATH_LINE" "$BASHRC"; then
+    log_skip "PATH já configurado em .bashrc."
+else
+    log_act "Adicionando PATH ao .bashrc..."
+    printf '\n%s\n' "$PATH_LINE" >> "$BASHRC"
+fi
+export PATH="$HOME/.local/bin:$PATH"
+
+# ------------------------------------------------------------------------------
+# 3. DISTROBOX
+# ------------------------------------------------------------------------------
+log_info "Passo 3/6: Verificando Distrobox..."
+
+write_distroboxrc() {
+    cat > "$HOME/.distroboxrc" <<'EOF'
+xhost +si:localuser:$USER >/dev/null
+export PIPEWIRE_RUNTIME_DIR=/dev/null
+export PATH=$HOME/.local/bin:$PATH
+EOF
+}
+
+if require_cmd distrobox; then
+    DB_LOCAL_VER="$(distrobox --version 2>/dev/null | awk '{print $2}')"
+else
+    DB_LOCAL_VER="0"
+fi
+
+DB_REMOTE_VER="$(curl -fsSL https://api.github.com/repos/89luca89/distrobox/releases/latest 2>/dev/null \
+    | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')"
+
+if [ -z "$DB_REMOTE_VER" ]; then
+    log_warn "Não consegui checar a versão remota do Distrobox (offline?). Pulando atualização."
+elif [ "$DB_LOCAL_VER" = "$DB_REMOTE_VER" ]; then
+    log_skip "Distrobox já está na última versão ($DB_LOCAL_VER)."
+else
+    log_act "Atualizando Distrobox ($DB_LOCAL_VER -> $DB_REMOTE_VER)..."
+    curl -fsSL https://raw.githubusercontent.com/89luca89/distrobox/main/install | sh -s -- --prefix "$HOME/.local"
+fi
+
+# Garante o .distroboxrc independentemente da versão.
+if [ ! -s "$HOME/.distroboxrc" ]; then
+    log_act "Criando .distroboxrc ausente..."
+    write_distroboxrc
+fi
+
+# ------------------------------------------------------------------------------
+# 4. PODMAN LAUNCHER (com verificação de download)
+# ------------------------------------------------------------------------------
+log_info "Passo 4/6: Verificando Podman Launcher..."
+PODMAN_BIN="$HOME/.local/bin/podman"
+VERSION_FILE="$HOME/.local/bin/.podman_installed_tag"
+
+# Tag remota via redirecionamento do /releases/latest.
+PM_LATEST_URL="$(curl -Ls -o /dev/null -w '%{url_effective}' \
+    https://github.com/89luca89/podman-launcher/releases/latest 2>/dev/null)"
+PM_REMOTE_TAG="$(echo "$PM_LATEST_URL" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+')"
+
+if [ -f "$VERSION_FILE" ] && [ -f "$PODMAN_BIN" ]; then
+    PM_LOCAL_TAG="$(cat "$VERSION_FILE")"
+else
+    PM_LOCAL_TAG="none"
+fi
+
+if [ -z "$PM_REMOTE_TAG" ]; then
+    log_warn "Não consegui checar a versão remota do Podman (offline?). Pulando."
+elif [ "$PM_LOCAL_TAG" = "$PM_REMOTE_TAG" ]; then
+    log_skip "Podman já está na última versão ($PM_LOCAL_TAG)."
+else
+    log_act "Instalando/Atualizando Podman ($PM_LOCAL_TAG -> $PM_REMOTE_TAG)..."
+    DOWNLOAD_URL="https://github.com/89luca89/podman-launcher/releases/download/${PM_REMOTE_TAG}/podman-launcher-amd64"
+    tmp="$(mktemp)"
+    # Só grava o "recibo" de versão DEPOIS de confirmar que o binário baixou inteiro.
+    if curl -fL -o "$tmp" "$DOWNLOAD_URL" && [ -s "$tmp" ]; then
+        mv -- "$tmp" "$PODMAN_BIN"
+        chmod +x "$PODMAN_BIN"
+        echo "$PM_REMOTE_TAG" > "$VERSION_FILE"
+        log_ok "Podman atualizado para $PM_REMOTE_TAG."
+    else
+        rm -f -- "$tmp"
+        log_err "Download do Podman falhou ou veio vazio. Recibo de versão NÃO gravado."
+    fi
+fi
+
+# ------------------------------------------------------------------------------
+# 5. SUBUID/SUBGID  ⚠ ALTERAÇÃO DE SISTEMA (pode ser perdida em update!)
+# ------------------------------------------------------------------------------
+log_info "Passo 5/6: Verificando mapeamento de usuários (subuid/subgid)..."
+log_warn "⚠ Esta etapa escreve em /etc — pode ser RESETADA num update da SteamOS."
+log_warn "  Se o Podman rootless parar após um update, rode este script de novo."
+
+if grep -q "^$(whoami):" /etc/subuid 2>/dev/null; then
+    log_skip "Mapeamento subuid/subgid já configurado."
+else
+    log_act "Configurando mapeamento (precisa de senha sudo)..."
+    sudo touch /etc/subuid /etc/subgid
+    sudo usermod --add-subuid 100000-165535 --add-subgid 100000-165535 "$(whoami)"
+fi
+
+# ------------------------------------------------------------------------------
+# 6. PASTA DE ÍCONES
+# ------------------------------------------------------------------------------
+log_info "Passo 6/6: Verificando pasta de ícones..."
+ICON_DIR="$HOME/.local/share/icons"
+mkdir -p "$ICON_DIR"
+if [ -O "$ICON_DIR" ]; then
+    log_skip "Permissões de ícones corretas."
+else
+    log_act "Corrigindo dono da pasta de ícones..."
+    sudo chown "$(whoami):$(id -gn)" "$ICON_DIR"
+fi
+
+# ------------------------------------------------------------------------------
+# RESUMO
+# ------------------------------------------------------------------------------
+echo ""
+banner "VERIFICAÇÃO CONCLUÍDA" "$GREEN"
+if require_cmd distrobox; then
+    echo -e "Distrobox: ${BOLD}$(distrobox --version 2>/dev/null | awk '{print $2}')${NC}"
+else
+    echo -e "Distrobox: ${BOLD}(não instalado)${NC}"
+fi
+echo -e "Podman:    ${BOLD}$(cat "$VERSION_FILE" 2>/dev/null || echo 'não instalado')${NC}"
+echo ""

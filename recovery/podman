@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# recovery/podman — Podman Health Doctor (Steam Deck / Arch)
+# ------------------------------------------------------------------------------
+# Diagnostica e repara o Podman rootless travado: mata processos zumbis, remove
+# locks corrompidos, regenera o estado do banco e faz um smoke test final.
+#
+# Escopo: USER-SPACE (rootless). NÃO altera o sistema imutável da SteamOS, então
+#         este script em si não é perdido em updates. Mas updates costumam deixar
+#         o Podman em deadlock — e é exatamente aí que ele serve.
+#
+# Uso:    ./podman [--dry-run] [-h|--help]
+# ==============================================================================
+
+# -u: pega variável não-definida | pipefail: erro real em pipes.
+# (sem -e DE PROPÓSITO: um "doctor" precisa seguir mesmo após falhas parciais.)
+set -uo pipefail
+
+# --- Carrega a lib comum (o build.sh inlina isto nas releases) ----------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/common.sh
+source "$SCRIPT_DIR/../lib/common.sh"
+
+# ------------------------------------------------------------------------------
+# 1. CONFIGURAÇÕES & ARGUMENTOS
+# ------------------------------------------------------------------------------
+TIMEOUT_CMD="10s"
+USER_ID="$(id -u)"
+RUNTIME_DIR="/run/user/$USER_ID"
+STORAGE_DIR="$HOME/.local/share/containers/storage"
+DRY_RUN=0
+
+usage() {
+    cat <<EOF
+Podman Health Doctor — diagnostica e repara o Podman rootless.
+
+Uso: $(basename "$0") [opções]
+
+Opções:
+  --dry-run     Simula: mostra o que seria feito, sem matar processos
+                nem remover arquivos.
+  -h, --help    Mostra esta ajuda.
+EOF
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --dry-run) DRY_RUN=1 ;;
+        -h|--help) usage; exit 0 ;;
+        *) log_err "Opção desconhecida: $1"; usage; exit 1 ;;
+    esac
+    shift
+done
+
+# Processos a terminar, em ordem de dependência.
+PROCESS_LIST=(fuse-overlayfs slirp4netns rootlessport conmon crun podman)
+
+# Locais de lock conhecidos.
+LOCK_FILES=(
+    "$RUNTIME_DIR/libpod/locks"
+    "$RUNTIME_DIR/containers/locks"
+    "$RUNTIME_DIR/vfs-containers/locks"
+    "$RUNTIME_DIR/overlay-containers/locks"
+    "$STORAGE_DIR/libpod/locks"
+    "$STORAGE_DIR/overlay-containers/locks"
+)
+
+# ------------------------------------------------------------------------------
+# 2. HELPERS
+# ------------------------------------------------------------------------------
+
+# Executa um comando com timeout. Retorna 124 em timeout, 0 ok, !=0 erro.
+exec_safe() {
+    timeout "$TIMEOUT_CMD" "$@" >/dev/null 2>&1
+}
+
+# Mata um processo pelo nome, com fallback killall -> pkill.
+kill_proc() {
+    local proc="$1"
+    if [ "$DRY_RUN" -eq 1 ]; then
+        log_warn "[dry-run] mataria o processo: $proc"
+        return 0
+    fi
+    if require_cmd killall; then
+        killall -9 "$proc" >/dev/null 2>&1
+    else
+        pkill -9 -x "$proc" >/dev/null 2>&1
+    fi
+}
+
+# Remove um caminho com guarda anti-vazio (evita rm -rf "" por var vazia).
+safe_rm() {
+    local path="$1"
+    if [ -z "$path" ]; then
+        log_err "safe_rm: caminho vazio ignorado (proteção)."
+        return 1
+    fi
+    if [ "$DRY_RUN" -eq 1 ]; then
+        log_warn "[dry-run] removeria: $path"
+        return 0
+    fi
+    rm -rf "$path"
+}
+
+# ------------------------------------------------------------------------------
+# 3. WORKFLOW
+# ------------------------------------------------------------------------------
+banner "PODMAN HEALTH DOCTOR — DIAGNÓSTICO E REPARO"
+[ "$DRY_RUN" -eq 1 ] && log_warn "MODO DRY-RUN ATIVO: nada será alterado de verdade."
+log_info "Iniciando protocolo de reparo para User ID: $USER_ID"
+
+# --- ETAPA 1: NEUTRALIZAÇÃO DE PROCESSOS --------------------------------------
+log_info "Etapa 1: Neutralizando processos zumbis ou travados..."
+for proc in "${PROCESS_LIST[@]}"; do
+    if pgrep -x "$proc" >/dev/null; then
+        kill_proc "$proc"
+        log_warn "Processo encerrado: $proc"
+    fi
+done
+log_ok "Ambiente de processos limpo."
+
+# --- ETAPA 2: REMOÇÃO DE LOCKS ------------------------------------------------
+log_info "Etapa 2: Verificando arquivos de trava (locks)..."
+locks_removed=0
+for lock_path in "${LOCK_FILES[@]}"; do
+    if [ -e "$lock_path" ]; then
+        if safe_rm "$lock_path"; then
+            log_warn "Lock removido: $lock_path"
+            locks_removed=$((locks_removed + 1))
+        fi
+    fi
+done
+if [ "$locks_removed" -eq 0 ]; then
+    log_ok "Nenhum lock corrompido encontrado."
+else
+    log_ok "Total de travas tratadas: $locks_removed"
+fi
+
+# Cache estático rootless.
+static_run="/var/tmp/podman-static/$USER_ID"
+if [ -d "$static_run" ]; then
+    if safe_rm "$static_run"; then
+        log_ok "Cache estático limpo."
+    else
+        log_err "Falha ao limpar $static_run (permissão?)."
+    fi
+fi
+
+# --- ETAPA 3: RECONSTRUÇÃO DO ESTADO ------------------------------------------
+log_info "Etapa 3: Regenerando consistência do banco de dados..."
+if [ "$DRY_RUN" -eq 1 ]; then
+    log_warn "[dry-run] rodaria: podman system renumber && podman system migrate"
+else
+    exec_safe podman system renumber
+    case $? in
+        124) log_err "Renumber sofreu timeout (filesystem ainda lento?)." ;;
+        0)   log_ok "IDs dos containers reordenados." ;;
+        *)   log_warn "Renumber falhou, mas seguiremos." ;;
+    esac
+
+    exec_safe podman system migrate
+    case $? in
+        124) log_err "Migrate sofreu timeout." ;;
+        0)   log_ok "Banco de dados migrado." ;;
+        *)   log_warn "Migrate falhou, mas seguiremos." ;;
+    esac
+fi
+
+# --- ETAPA 4: LIMPEZA DE CONTAINERS DEFEITUOSOS -------------------------------
+log_info "Etapa 4: Auditando containers restantes..."
+containers="$(timeout 5s podman ps -a --format '{{.ID}}|{{.Names}}|{{.State}}' 2>/dev/null)"
+
+if [ -z "$containers" ]; then
+    log_ok "Nenhum container encontrado (ambiente zerado)."
+else
+    analyzed=0
+    # here-string (e não pipe) para o while NÃO rodar em subshell e perder o contador.
+    while IFS='|' read -r cid cname cstatus; do
+        [ -z "$cid" ] && continue
+        log_info "Analisando: $cname ($cstatus)"
+        if [ "$DRY_RUN" -eq 1 ]; then
+            log_warn "[dry-run] higienizaria o container: $cname"
+        else
+            exec_safe podman container cleanup "$cid"
+            exec_safe podman stop --time 0 "$cid"
+            log_ok "Container $cname higienizado."
+        fi
+        analyzed=$((analyzed + 1))
+    done <<< "$containers"
+    log_ok "Containers analisados: $analyzed"
+fi
+
+# --- ETAPA 5: SMOKE TEST ------------------------------------------------------
+log_info "Etapa 5: Teste de saúde (smoke test)..."
+if [ "$DRY_RUN" -eq 1 ]; then
+    log_warn "[dry-run] rodaria: podman info"
+    echo ""
+    log_ok "Dry-run concluído. Rode sem --dry-run para aplicar de verdade."
+    exit 0
+fi
+
+if exec_safe podman info; then
+    echo ""
+    banner "SUCESSO: O PODMAN ESTÁ OPERACIONAL" "$GREEN"
+    echo "Você pode rodar seus containers agora."
+    exit 0
+else
+    echo ""
+    banner "ALERTA: O PODMAN AINDA APRESENTA ERROS" "$RED"
+    echo "Sugestão: reinicie o Steam Deck completamente se o erro persistir."
+    exit 1
+fi

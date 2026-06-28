@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# setup/deck-region — Configura teclado, fuso horário, NTP e locale
+# ------------------------------------------------------------------------------
+# ⚠ ALTERAÇÃO DE SISTEMA: tudo aqui é gravado em /etc (localectl/timedatectl) e
+#   PODE SER RESETADO num update da SteamOS. Reexecute este script depois de
+#   atualizar o sistema se o teclado/fuso/idioma voltarem ao padrão.
+#
+# Escopo: sistema (host SteamOS).
+#
+# Uso:    ./deck-region [-h|--help]
+# ==============================================================================
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/common.sh
+source "$SCRIPT_DIR/../lib/common.sh"
+
+case "${1:-}" in
+    -h|--help)
+        echo "Configura teclado, fuso horário, NTP e locale no Steam Deck."
+        echo "Uso: $(basename "$0")"
+        exit 0
+        ;;
+esac
+
+# ------------------------------------------------------------------------------
+# ALVOS (customize aqui)
+# ------------------------------------------------------------------------------
+TARGET_KB_LAYOUT="us"
+TARGET_KB_MODEL="pc104"
+TARGET_KB_VARIANT="alt-intl"
+TARGET_TZ="America/Sao_Paulo"
+TARGET_LANG="en_US.UTF-8"
+
+# ------------------------------------------------------------------------------
+# 0. AUTO-RELAUNCH (garante execução num terminal, ex.: duplo-clique)
+# ------------------------------------------------------------------------------
+if [ -z "${TERM:-}" ] || [ "${TERM:-}" = "dumb" ]; then
+    if require_cmd konsole; then
+        konsole --hold -e bash "$(realpath "$0")"
+        exit 0
+    else
+        echo "Este script precisa rodar em um terminal."
+        exit 1
+    fi
+fi
+
+banner "CONFIGURAÇÃO DE SISTEMA: TECLADO, DATA E HORA" "$YELLOW"
+log_warn "⚠ Estas mudanças vivem em /etc e podem ser RESETADAS num update da SteamOS."
+
+# Status para o resumo final.
+STATUS_PASS="Verificado"
+STATUS_KB="Pular (já configurado)"
+STATUS_TZ="Pular (já configurado)"
+STATUS_NTP="Pular (já configurado)"
+STATUS_LOCALE="Pular (já configurado)"
+
+# ------------------------------------------------------------------------------
+# 1. SENHA (SUDO)
+# ------------------------------------------------------------------------------
+log_info "Verificando permissões de administrador..."
+USER_PASS_STATUS="$(passwd -S "$(whoami)" 2>/dev/null | awk '{print $2}')"
+if [ "$USER_PASS_STATUS" = "NP" ]; then
+    log_err "Usuário sem senha definida."
+    log_warn "É necessária senha para alterar data, hora e localidade. Defina agora:"
+    if ! passwd; then
+        log_err "Falha ao criar senha. Abortando."
+        exit 1
+    fi
+    STATUS_PASS="Senha criada"
+else
+    log_ok "Senha já configurada."
+fi
+
+if ! sudo -v; then
+    log_err "Falha na autenticação sudo."
+    exit 1
+fi
+
+# ------------------------------------------------------------------------------
+# 2. TECLADO
+# ------------------------------------------------------------------------------
+log_info "Verificando layout de teclado..."
+CURRENT_LAYOUT="$(localectl status 2>/dev/null  | awk '/X11 Layout/  {print $3}')"
+CURRENT_VARIANT="$(localectl status 2>/dev/null | awk '/X11 Variant/ {print $3}')"
+
+if [ "$CURRENT_LAYOUT" = "$TARGET_KB_LAYOUT" ] && [ "$CURRENT_VARIANT" = "$TARGET_KB_VARIANT" ]; then
+    log_skip "Teclado já está em $TARGET_KB_LAYOUT $TARGET_KB_VARIANT."
+else
+    log_act "Configurando teclado para $TARGET_KB_LAYOUT ($TARGET_KB_VARIANT)..."
+    sudo localectl set-x11-keymap "$TARGET_KB_LAYOUT" "$TARGET_KB_MODEL" "$TARGET_KB_VARIANT"
+    # Aplica na sessão atual se setxkbmap existir (X11). Em Wayland, vale após reiniciar.
+    if require_cmd setxkbmap; then
+        setxkbmap -model "$TARGET_KB_MODEL" -layout "$TARGET_KB_LAYOUT" -variant "$TARGET_KB_VARIANT" 2>/dev/null \
+            || log_warn "Não apliquei na sessão atual (Wayland?). Vale após reiniciar."
+    else
+        log_warn "setxkbmap ausente — config permanente feita; aplica após reiniciar."
+    fi
+    STATUS_KB="Atualizado"
+fi
+
+# ------------------------------------------------------------------------------
+# 3. FUSO HORÁRIO
+# ------------------------------------------------------------------------------
+log_info "Verificando fuso horário..."
+CURRENT_TZ="$(timedatectl show -p Timezone --value 2>/dev/null)"
+if [ "$CURRENT_TZ" = "$TARGET_TZ" ]; then
+    log_skip "Fuso horário já é $TARGET_TZ."
+else
+    log_act "Alterando fuso de ${CURRENT_TZ:-?} para $TARGET_TZ..."
+    sudo timedatectl set-timezone "$TARGET_TZ"
+    STATUS_TZ="Atualizado para SP"
+fi
+
+# ------------------------------------------------------------------------------
+# 4. NTP
+# ------------------------------------------------------------------------------
+log_info "Verificando sincronização de relógio (NTP)..."
+NTP_ACTIVE="$(timedatectl show -p NTP --value 2>/dev/null)"
+if [ "$NTP_ACTIVE" = "yes" ]; then
+    log_skip "Sincronização NTP já está ativa."
+else
+    log_act "Ativando NTP..."
+    sudo timedatectl set-ntp true
+    STATUS_NTP="Ativado"
+fi
+
+# ------------------------------------------------------------------------------
+# 5. LOCALE
+# ------------------------------------------------------------------------------
+log_info "Verificando idioma do sistema..."
+CURRENT_LANG="$(localectl status 2>/dev/null | grep -o 'LANG=[^ ]*' | cut -d= -f2)"
+if [ "$CURRENT_LANG" = "$TARGET_LANG" ]; then
+    log_skip "Idioma já é $TARGET_LANG."
+else
+    log_act "Alterando idioma para $TARGET_LANG..."
+    sudo localectl set-locale "LANG=$TARGET_LANG" "LC_TIME=$TARGET_LANG"
+    STATUS_LOCALE="Atualizado (reinicie p/ aplicar)"
+fi
+
+# ------------------------------------------------------------------------------
+# 6. RESUMO
+# ------------------------------------------------------------------------------
+echo ""
+banner "RELATÓRIO DE MUDANÇAS" "$YELLOW"
+echo -e "1. Senha/Sudo:    $STATUS_PASS"
+echo -e "2. Teclado:       $STATUS_KB"
+echo -e "3. Fuso Horário:  $STATUS_TZ"
+echo -e "4. Sincronização: $STATUS_NTP"
+echo -e "5. Idioma:        $STATUS_LOCALE"
+echo ""
+log_info "Configuração atual:"
+echo "------------------------------------------------"
+localectl status 2>/dev/null | grep -E "X11 Layout|X11 Variant|System Locale"
+timedatectl    2>/dev/null | grep -E "Time zone|NTP service"
+echo "------------------------------------------------"
